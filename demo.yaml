@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Full IoT and Web Integration Stack
+
+Parameters:
+  ApiLambdaFunctionName:
+    Type: String
+    Description: The name or ARN of the API Lambda function.
+
+Resources:
+
+  SensorDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SensorDB
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: DormName
+          AttributeType: S
+        - AttributeName: TimeStamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: DormName
+          KeyType: HASH
+        - AttributeName: TimeStamp
+          KeyType: RANGE
+
+  IoTProcessFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: InvokeProcess
+      Handler: index.lambda_handler
+      Role: arn:aws:iam::599754495757:role/LabRole
+      Runtime: python3.12
+      Timeout: 10
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import time
+          from datetime import datetime
+          from boto3.dynamodb.types import Decimal
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              dynamodb = boto3.resource('dynamodb')
+              table = dynamodb.Table('SensorDB')
+              timestamp = datetime.now().isoformat()
+
+              try:
+                  orp_value = Decimal(str(event['ORP']))
+                  water_data = {
+                      'DormName': event['DormName'],
+                      'TimeStamp': timestamp,
+                      'ORP': orp_value,
+                      'temp': Decimal(str(event['temp'])),
+                      'pH': Decimal(str(event['pH']))
+                  }
+
+                  for attempt in range(3):
+                      try:
+                          table.put_item(Item=water_data)
+                          break
+                      except ClientError as err:
+                          if attempt < 2:
+                              time.sleep(1)
+                          else:
+                              raise
+
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('Water quality data stored successfully')
+                  }
+
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f"Error storing data: {str(e)}")
+                  }
+
+  SensorRead:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ReadSensorData
+      Handler: index.lambda_handler
+      Role: arn:aws:iam::599754495757:role/LabRole
+      Runtime: python3.12
+      Timeout: 10
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: SensorDB
+      Code:
+        ZipFile: |
+          import json 
+          import boto3 
+          import os 
+          from decimal import Decimal 
+
+          class DecimalEncoder(json.JSONEncoder): 
+              def default(self, o): 
+                  if isinstance(o, Decimal): 
+                      if o % 1 == 0: 
+                          return int(o) 
+                      else: 
+                          return float(o) 
+                  return super(DecimalEncoder, self).default(o) 
+
+          dynamodb = boto3.resource('dynamodb') 
+          table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'SensorDB') 
+          table = dynamodb.Table(table_name) 
+
+          def lambda_handler(event, context): 
+              try: 
+                  response = table.scan() 
+                  items = response.get('Items', []) 
+
+                  while 'LastEvaluatedKey' in response: 
+                      response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey']) 
+                      items.extend(response.get('Items', [])) 
+
+                  return { 
+                      'statusCode': 200, 
+                      'headers': { 
+                          'Content-Type': 'application/json', 
+                          'Access-Control-Allow-Origin': '*' 
+                      }, 
+                      'body': json.dumps(items, cls=DecimalEncoder) 
+                  } 
+              except Exception as e: 
+                  return { 
+                      'statusCode': 500, 
+                      'headers': { 
+                          'Content-Type': 'application/json', 
+                          'Access-Control-Allow-Origin': '*' 
+                      }, 
+                      'body': json.dumps({'error': str(e)}) 
+                  }
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt IoTProcessFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:rule/SensorDataIngestRule
+
+  IoTRuleSensorData:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: SensorDataIngestRule
+      TopicRulePayload:
+        Sql: |
+          SELECT DormName, ORP, temp, pH
+          FROM 'sensor/+/data'
+        RuleDisabled: false
+        AwsIotSqlVersion: "2016-03-23"
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt IoTProcessFunction.Arn
+
+  MyApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MyDataApi
+      Description: API for data operations
+
+  DataResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt MyApi.RootResourceId
+      PathPart: data
+      RestApiId: !Ref MyApi
+
+  GetDataMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt SensorRead.Arn
+        IntegrationResponses:
+          - StatusCode: '200'
+      MethodResponses:
+        - StatusCode: '200'
+      ResourceId: !Ref DataResource
+      RestApiId: !Ref MyApi
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: GetDataMethod
+    Properties:
+      RestApiId: !Ref MyApi
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiDeployment
+      RestApiId: !Ref MyApi
+      StageName: prod
+
+  AquaguardStaticWebBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: aquaguard-staticweb-test-1
+      VersioningConfiguration:
+        Status: Enabled
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+Outputs:
+  InvokeURL:
+    Description: "API Gateway Invoke URL for Prod stage"
+    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/prod/data"
+
+  WebBucketURL:
+    Description: "Static Website URL"
+    Value: !Sub "http://${AquaguardStaticWebBucket}.s3-website-${AWS::Region}.amazonaws.com"
