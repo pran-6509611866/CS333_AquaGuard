@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploy SensorDB, Lambda, and IoT Rule
+Description: Deploy SensorDB, Lambda, IoT Rule, and IoT Thing Setup (no certificate)
 
 Resources:
 
@@ -15,16 +15,16 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: DormName
-          KeyType: HASH     # Partition Key
+          KeyType: HASH
         - AttributeName: TimeStamp
-          KeyType: RANGE    # Sort Key
+          KeyType: RANGE
 
   IoTProcessFunction:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: InvokeProcess
       Handler: index.lambda_handler
-      Role: arn:aws:iam::599754495757:role/LabRole  # เปลี่ยนให้ตรงกับบัญชีของคุณ
+      Role: arn:aws:iam::599754495757:role/LabRole  # แก้ตาม Role ที่มีสิทธิ
       Runtime: python3.12
       Timeout: 10
       Code:
@@ -93,3 +93,35 @@ Resources:
         Actions:
           - Lambda:
               FunctionArn: !GetAtt IoTProcessFunction.Arn
+
+  WaterSensorThing:
+    Type: AWS::IoT::Thing
+    Properties:
+      ThingName: WaterSensorThing
+
+  WaterSensorPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+      PolicyName: WaterSensorPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - iot:Connect
+              - iot:Publish
+              - iot:Subscribe
+              - iot:Receive
+            Resource:
+              - arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/*
+              - arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/*
+              - arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/sensor/*
+
+Outputs:
+  ThingName:
+    Description: The name of the IoT Thing
+    Value: !Ref WaterSensorThing
+
+  PolicyName:
+    Description: The name of the IoT Policy
+    Value: !Ref WaterSensorPolicy
