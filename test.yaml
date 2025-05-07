@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy SensorDB, Lambda, and IoT Rule
+
+Resources:
+
+  SensorDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SensorDB
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: DormName
+          AttributeType: S
+        - AttributeName: TimeStamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: DormName
+          KeyType: HASH     # Partition Key
+        - AttributeName: TimeStamp
+          KeyType: RANGE    # Sort Key
+
+  IoTProcessFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: InvokeProcess
+      Handler: index.lambda_handler
+      Role: arn:aws:iam::599754495757:role/LabRole  # เปลี่ยนให้ตรงกับบัญชีของคุณ
+      Runtime: python3.12
+      Timeout: 10
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import time
+          from datetime import datetime
+          from boto3.dynamodb.types import Decimal
+          from botocore.exceptions import ClientError
+
+          def lambda_handler(event, context):
+              dynamodb = boto3.resource('dynamodb')
+              table = dynamodb.Table('SensorDB')
+              timestamp = datetime.now().isoformat()
+
+              try:
+                  orp_value = Decimal(str(event['ORP']))
+                  water_data = {
+                      'DormName': event['DormName'],
+                      'TimeStamp': timestamp,
+                      'ORP': orp_value,
+                      'temp': Decimal(str(event['temp'])),
+                      'pH': Decimal(str(event['pH']))
+                  }
+
+                  for attempt in range(3):
+                      try:
+                          table.put_item(Item=water_data)
+                          break
+                      except ClientError as err:
+                          if attempt < 2:
+                              time.sleep(1)
+                          else:
+                              raise
+
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps('Water quality data stored successfully')
+                  }
+
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps(f"Error storing data: {str(e)}")
+                  }
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt IoTProcessFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !Sub arn:aws:iot:${AWS::Region}:${AWS::AccountId}:rule/SensorDataIngestRule
+
+  IoTRuleSensorData:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: SensorDataIngestRule
+      TopicRulePayload:
+        Sql: |
+          SELECT DormName, ORP, temp, pH
+          FROM 'sensor/+/data'
+        RuleDisabled: false
+        AwsIotSqlVersion: "2016-03-23"
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt IoTProcessFunction.Arn
