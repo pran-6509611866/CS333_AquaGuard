@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploy SensorDB, Lambda, IoT Rule, and IoT Thing Setup (no certificate)
+Transform: AWS::Serverless-2016-10-31
+Description: Deploy SensorDB, Lambda, IoT Rule, and API Gateway
 
 Resources:
 
@@ -24,7 +25,7 @@ Resources:
     Properties:
       FunctionName: InvokeProcess
       Handler: index.lambda_handler
-      Role: arn:aws:iam::599754495757:role/LabRole  # แก้ตาม Role ที่มีสิทธิ
+      Role: arn:aws:iam::599754495757:role/LabRole
       Runtime: python3.12
       Timeout: 10
       Code:
@@ -72,6 +73,61 @@ Resources:
                       'body': json.dumps(f"Error storing data: {str(e)}")
                   }
 
+  RetrieveSensorDataFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SensorRead
+      Handler: index.lambda_handler
+      Role: arn:aws:iam::599754495757:role/LabRole
+      Runtime: python3.12
+      Timeout: 10
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: SensorDB
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from decimal import Decimal
+
+          class DecimalEncoder(json.JSONEncoder):
+              def default(self, o):
+                  if isinstance(o, Decimal):
+                      return int(o) if o % 1 == 0 else float(o)
+                  return super(DecimalEncoder, self).default(o)
+
+          dynamodb = boto3.resource('dynamodb')
+          table_name = os.environ.get('DYNAMODB_TABLE_NAME', 'SensorDB')
+          table = dynamodb.Table(table_name)
+
+          def lambda_handler(event, context):
+              try:
+                  response = table.scan()
+                  items = response.get('Items', [])
+
+                  while 'LastEvaluatedKey' in response:
+                      response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+                      items.extend(response.get('Items', []))
+
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps(items, cls=DecimalEncoder)
+                  }
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Content-Type': 'application/json',
+                          'Access-Control-Allow-Origin': '*'
+                      },
+                      'body': json.dumps({'error': str(e)})
+                  }
+
   LambdaInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -94,34 +150,61 @@ Resources:
           - Lambda:
               FunctionArn: !GetAtt IoTProcessFunction.Arn
 
-  WaterSensorThing:
-    Type: AWS::IoT::Thing
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
     Properties:
-      ThingName: WaterSensorThing
+      Name: MyDataApi
+      Description: API for data operations
 
-  WaterSensorPolicy:
-    Type: AWS::IoT::Policy
+  ApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
     Properties:
-      PolicyName: WaterSensorPolicy
-      PolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Action:
-              - iot:Connect
-              - iot:Publish
-              - iot:Subscribe
-              - iot:Receive
-            Resource:
-              - arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/*
-              - arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/sensor/*
-              - arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topicfilter/sensor/*
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: data
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !GetAtt RetrieveSensorDataFunction.Arn
+      ResourceId: !Ref ApiGatewayResource
+      RestApiId: !Ref ApiGatewayRestApi
+      MethodResponses:
+        - StatusCode: '200'
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ApiGatewayMethod
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiGatewayDeployment
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: prod
+
+  LambdaPermissionForApi:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RetrieveSensorDataFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/*/data
 
 Outputs:
-  ThingName:
-    Description: The name of the IoT Thing
-    Value: !Ref WaterSensorThing
+  ApiUrl:
+    Description: "API Gateway Invoke URL for Prod stage"
+    Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/data"
 
-  PolicyName:
-    Description: The name of the IoT Policy
-    Value: !Ref WaterSensorPolicy
+  SensorDBTableName:
+    Description: "Name of the DynamoDB table"
+    Value: !Ref SensorDBTable
