@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31 # If using SAM, otherwise remove for plain CloudFormation
+Description: API Gateway with Lambda Integration
+
+Parameters:
+  ApiLambdaFunctionName: # Parameter to pass the Lambda function name or ARN
+    Type: String
+    Description: The name or ARN of the API Lambda function developed by Person A.
+
+Resources:
+  MyApi:
+    Type: AWS::ApiGateway::RestApi # For plain CloudFormation
+    # Type: AWS::Serverless::Api # For SAM
+    Properties:
+      Name: MyDataApi
+      Description: API for data operations
+
+  DataResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt MyApi.RootResourceId
+      PathPart: data # This creates the /data resource
+      RestApiId: !Ref MyApi
+
+  GetDataMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE # Or your desired authorization
+      HttpMethod: GET
+      Integration:
+        Type: AWS_PROXY # Specifies Lambda Proxy integration
+        IntegrationHttpMethod: POST # For Lambda Proxy, this is always POST
+        Uri: !Sub # Constructs the URI to invoke the Lambda function
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - LambdaArn: !Ref SensorRead # Or directly use the ARN if not using a Ref
+        IntegrationResponses:
+          - StatusCode: '200' # Default response
+      MethodResponses:
+        - StatusCode: '200'
+      ResourceId: !Ref DataResource
+      RestApiId: !Ref MyApi
+
+  # Deployment and Stage are necessary to make the API invokable
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: GetDataMethod # Ensure method is created before deployment
+    Properties:
+      RestApiId: !Ref MyApi
+      # StageName: prod # For SAM, stage is often configured in Globals or API definition
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiDeployment
+      RestApiId: !Ref MyApi
+      StageName: prod # Or any stage name like 'dev', 'v1'
+
+Outputs:
+  InvokeURL:
+    Description: "API Gateway Invoke URL for Prod stage"
+    Value: !Sub "https://${MyApi}.execute-api.${AWS::Region}.amazonaws.com/prod/data"
