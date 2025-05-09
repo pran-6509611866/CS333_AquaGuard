@@ -205,7 +205,7 @@ Resources:
   AquaguardStaticWebBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: aquaguard-staticweb-test-1
+      BucketName: aquaguard-staticweb-test-0001
       VersioningConfiguration:
         Status: Enabled
       WebsiteConfiguration:
