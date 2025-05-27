@@ -205,7 +205,7 @@ Resources:
   AquaguardStaticWebBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: aquaguard-staticweb-test-1
+      BucketName: aquaguard-staticweb-test-0010
       VersioningConfiguration:
         Status: Enabled
       WebsiteConfiguration:
@@ -273,6 +273,82 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmDescription: "Alarm when SensorDB experiences throttling"
+  
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: IoTMonitoringDashboard
+      DashboardBody: 
+        Fn::Sub: |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "region": "${AWS::Region}",
+                  "title": "IoTProcess Lambda - Errors & Invocations",
+                  "metrics": [
+                    [ "AWS/Lambda", "Errors", "FunctionName", "${IoTProcessFunction}" ],
+                    [ ".", "Invocations", ".", "." ]
+                  ],
+                  "period": 60,
+                  "stat": "Sum",
+                  "yAxis": {
+                    "left": {
+                      "min": 0
+                    }
+                  }
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "region": "${AWS::Region}",
+                  "title": "SensorRead Lambda - Errors & Invocations",
+                  "metrics": [
+                    [ "AWS/Lambda", "Errors", "FunctionName", "${SensorRead}" ],
+                    [ ".", "Invocations", ".", "." ]
+                  ],
+                  "period": 60,
+                  "stat": "Sum",
+                  "yAxis": {
+                    "left": {
+                      "min": 0
+                    }
+                  }
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "region": "${AWS::Region}",
+                  "title": "DynamoDB Throttled Requests",
+                  "metrics": [
+                    [ "AWS/DynamoDB", "ThrottledRequests", "TableName", "${SensorDBTable}" ]
+                  ],
+                  "period": 60,
+                  "stat": "Sum",
+                  "yAxis": {
+                    "left": {
+                      "min": 0
+                    }
+                  }
+                }
+              }
+            ]
+          }
 
 Outputs:
   InvokeURL:
