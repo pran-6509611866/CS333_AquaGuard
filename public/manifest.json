@@ -1,0 +1,26 @@
+{
+  "name": "AquaGuard - Water Quality Monitoring",
+  "short_name": "AquaGuard",
+  "description": "Real-time water quality monitoring system for dormitory facilities",
+  "icons": [
+    {
+      "src": "/aquaguard-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg", 
+      "sizes": "32x32",
+      "type": "image/svg+xml"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#3b82f6",
+  "background_color": "#f8fafc",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "categories": ["utilities", "productivity", "business"],
+  "lang": "en"
+}

@@ -1,0 +1,35 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Main water drop shape -->
+  <path d="M32 2C32 2 14 20 14 36C14 47.0457 23.0457 56 34 56H30C41.0457 56 50 47.0457 50 36C50 20 32 2 32 2Z" fill="url(#gradient1)"/>
+  
+  <!-- Inner water highlight -->
+  <path d="M32 8C32 8 20 22 20 34C20 42.8366 27.1634 50 36 50H28C36.8366 50 44 42.8366 44 34C44 22 32 8 32 8Z" fill="url(#gradient2)" opacity="0.8"/>
+  
+  <!-- Monitoring waves/signals -->
+  <circle cx="32" cy="32" r="6" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.7"/>
+  <circle cx="32" cy="32" r="10" fill="none" stroke="#ffffff" stroke-width="1.2" opacity="0.5"/>
+  <circle cx="32" cy="32" r="14" fill="none" stroke="#ffffff" stroke-width="0.8" opacity="0.3"/>
+  
+  <!-- Central monitoring dot -->
+  <circle cx="32" cy="32" r="3" fill="#ffffff" opacity="0.9"/>
+  
+  <!-- Quality indicator bars -->
+  <rect x="25" y="38" width="2" height="8" fill="#4ade80" rx="1"/>
+  <rect x="28" y="35" width="2" height="11" fill="#22c55e" rx="1"/>
+  <rect x="31" y="33" width="2" height="13" fill="#16a34a" rx="1"/>
+  <rect x="34" y="35" width="2" height="11" fill="#22c55e" rx="1"/>
+  <rect x="37" y="38" width="2" height="8" fill="#4ade80" rx="1"/>
+  
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="gradient1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#1d4ed8;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1e40af;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="gradient2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#60a5fa;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+</svg>
