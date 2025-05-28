@@ -1,28 +1,26 @@
 import json
 import boto3
+import os
+from datetime import datetime
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
-import os
-from datetime import datetime, timedelta
 
-# ใช้ Environment Variable สำหรับ LINE และ DynamoDB
+# อ่าน LINE Token และ Secret จาก Environment Variable
 LINE_CHANNEL_ACCESS_TOKEN = os.environ['LINE_CHANNEL_ACCESS_TOKEN']
 LINE_CHANNEL_SECRET = os.environ['LINE_CHANNEL_SECRET']
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# สร้าง DynamoDB Client
+# สร้าง DynamoDB Resource และ Table
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('SensorDB')
 
 def lambda_handler(event, context):
     try:
-        body = event['body']
-        headers = event['headers']
-        signature = headers['x-line-signature']
-
-        handler.handle(body, signature)
+        body = json.loads(event['body'])
+        signature = event['headers']['x-line-signature']
+        handler.handle(event['body'], signature)
 
         return {
             'statusCode': 200,
@@ -38,93 +36,86 @@ def lambda_handler(event, context):
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_message = event.message.text.strip()
-    today = datetime.now().strftime('%Y-%m-%d')
 
-    if user_message.endswith("-วันนี้"):
-        dorm_name = user_message.split("-")[0]
-        date = today
-        response = get_water_quality(dorm_name, date)
-        reply_message = format_reply(dorm_name, date, response)
-
-    elif user_message.endswith("-ประวัติ"):
-        dorm_name = user_message.split("-")[0]
-        date = today
-        historical_data = get_historical_data(dorm_name, date)
-        reply_message = format_historical_reply(dorm_name, historical_data)
-
+    if user_message == "รายงานคุณภาพนํ้าวันนี้":
+        items = get_all_water_quality_items()
+        reply_message = build_water_quality_report(items)
     else:
-        reply_message = "กรุณาพิมพ์หอพักตามรูปแบบ: <หอพัก>-วันนี้ หรือ <หอพัก>-ประวัติ"
+        reply_message = "กรุณาพิมพ์คำว่า 'รายงานคุณภาพนํ้าวันนี้' เพื่อดูสถานะคุณภาพน้ำรวม"
 
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_message)
     )
 
-# ดึงข้อมูลคุณภาพน้ำในวันที่กำหนด
-def get_water_quality(dorm_name, date):
+def get_all_water_quality_items():
     try:
-        response = table.get_item(
-            Key={
-                'DormName': dorm_name,
-                'TimeStamp': date  # ใช้ TimeStamp แทน Date
-            }
-        )
-        if 'Item' in response:
-            item = response['Item']
-            item['quality'] = 'GOOD' if item['orp'] >= 300 else 'POOR'
-            return item
-        else:
-            return None
+        response = table.scan()
+        return response.get('Items', [])
     except Exception as e:
-        print(f"Error fetching water quality data: {e}")
-        return None
+        print(f"Error scanning table: {e}")
+        return []
 
-# ดึงข้อมูลย้อนหลัง 7 วัน
-def get_historical_data(dorm_name, current_date):
-    historical_data = []
-    for i in range(7):
-        past_date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-        try:
-            response = table.get_item(
-                Key={
-                    'DormName': dorm_name,
-                    'TimeStamp': past_date  # ใช้ TimeStamp แทน Date
-                }
-            )
-            if 'Item' in response:
-                item = response['Item']
-                item['quality'] = 'GOOD' if item['orp'] >= 300 else 'POOR'
-                historical_data.append(item)
-        except Exception as e:
-            print(f"Error fetching historical data for {past_date}: {e}")
-    return historical_data
+def build_water_quality_report(items):
+    status_count = {
+        "EXCELLENT": [],
+        "GOOD": [],
+        "WARNING": [],
+        "CRITICAL": []
+    }
+    alerts_by_dorm = {}
+    latest_timestamp = ""
 
-# จัดข้อความตอบกลับข้อมูลวันนี้
-def format_reply(dorm_name, date, data):
-    if data:
-        return (
-            f"คุณภาพน้ำของหอพัก {dorm_name} ในวันที่ {date}:\n"
-            f"- ค่า ORP: {data['orp']} mV\n"
-            f"- ค่า pH: {data['ph']}\n"
-            f"- อุณหภูมิ: {data['temperature']} °C\n"
-            f"- คุณภาพน้ำ: {data['quality']}\n"
-            f"- เวลาบันทึก: {data['TimeStamp']}"
-        )
-    else:
-        return f"ไม่พบข้อมูลคุณภาพน้ำของหอพัก {dorm_name} สำหรับวันที่ {date}"
+    for item in items:
+        dorm = item.get("dorm_name", "")
+        device_id = item.get("device_id", "")
+        status = item.get("quality_status", "")
+        timestamp = item.get("timestamp", "")
+        status_count.setdefault(status, []).append((dorm, device_id))
 
-# จัดข้อความตอบกลับข้อมูลย้อนหลัง
-def format_historical_reply(dorm_name, historical_data):
-    if historical_data:
-        reply_message = f"ข้อมูลคุณภาพน้ำของหอพัก {dorm_name} ใน 7 วันที่ผ่านมา:\n"
-        for data in historical_data:
-            reply_message += (
-                f"วันที่ {data['TimeStamp']}:\n"
-                f"- ค่า ORP: {data['orp']} mV\n"
-                f"- ค่า pH: {data['ph']}\n"
-                f"- อุณหภูมิ: {data['temperature']} °C\n"
-                f"- คุณภาพน้ำ: {data['quality']}\n\n"
-            )
-        return reply_message
-    else:
-        return f"ไม่พบข้อมูลคุณภาพน้ำย้อนหลังสำหรับหอพัก {dorm_name} ใน 7 วันที่ผ่านมา"
+        if status in ["WARNING", "CRITICAL"]:
+            alerts = item.get("alerts", [])
+            alert_msgs = []
+            for alert in alerts:
+                message = alert.get("message", "")
+                alert_msgs.append(message)
+            alerts_by_dorm[dorm] = {
+                "device_id": device_id,
+                "status": status,
+                "alerts": alert_msgs
+            }
+
+        if timestamp > latest_timestamp:
+            latest_timestamp = timestamp
+
+    try:
+        dt = datetime.strptime(latest_timestamp, "%Y-%m-%dT%H:%M:%SZ")
+        thai_year = dt.year + 543
+        date_thai = dt.strftime(f"%-d %b {thai_year}").replace("May", "พ.ค.").replace("Jun", "มิ.ย.")
+    except:
+        date_thai = "ไม่ทราบ"
+
+    summary_text = (
+        f"🏠 **รายงานคุณภาพน้ำ AquaGuard** (อัปเดตล่าสุด: {date_thai})\n\n"
+        f"**สรุปสถานะโดยรวม:**\n"
+        f"• 🟢 ดีเยี่ยม: {len(status_count['EXCELLENT'])} จุด ({', '.join([d for d, _ in status_count['EXCELLENT']])})\n"
+        f"• 🟡 ดี: {len(status_count['GOOD'])} จุด ({', '.join([d for d, _ in status_count['GOOD']])})\n"
+        f"• 🟠 เตือน: {len(status_count['WARNING'])} จุด ({', '.join([d for d, _ in status_count['WARNING']])})\n"
+        f"• 🔴 วิกฤต: {len(status_count['CRITICAL'])} จุด ({', '.join([d for d, _ in status_count['CRITICAL']])})\n"
+    )
+
+    attention_text = ""
+    if alerts_by_dorm:
+        attention_text += "\n**จุดที่ต้องให้ความสนใจ:**\n"
+        for dorm, data in alerts_by_dorm.items():
+            emoji = "⚠️"
+            label = "สถานะวิกฤต" if data["status"] == "CRITICAL" else "เตือน"
+            dorm_label = f"**หอพัก {dorm}**"
+            if dorm == "C3" and data["device_id"].endswith("002"):
+                dorm_label = f"**หอพัก {dorm} (เครื่อง 002)**"
+            attention_text += f"{emoji} {dorm_label} - {label}\n"
+            for msg in data["alerts"]:
+                attention_text += f"- {msg}\n"
+
+    closing_text = "\nจุดอื่นๆ ทั้งหมดอยู่ในเกณฑ์ปลอดภัย"
+    return summary_text + attention_text + closing_text
